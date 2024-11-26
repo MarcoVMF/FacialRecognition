@@ -1,15 +1,16 @@
-import pickle
-import cv2
 import os
-import cvzone
-import face_recognition
-import numpy as np
-from datetime import datetime
-
 import bd
+import cv2
+import time
+import pickle
+import cvzone
+import threading
+import numpy as np
+import face_recognition
+from datetime import datetime
 from bd import register_attendance
 
-# Setting up the camera settings
+
 cap = cv2.VideoCapture(0)
 cap.set(3, 640)
 cap.set(4, 480)
@@ -34,8 +35,6 @@ current_hour = now.strftime('%H:%M')
 
 day_of_week = day_translation.get(day_of_week, day_of_week)
 
-discipline_id = bd.fetchDisciplineByHourAndDay(day_of_week, current_hour)
-
 # Getting the folders
 folderModePath = 'Resources/modes'
 modePathList = os.listdir(folderModePath)
@@ -43,18 +42,21 @@ imgModeList = []
 for path in modePathList:
     imgModeList.append(cv2.imread(os.path.join(folderModePath, path)))
 
-# importing the encoding file
+# Importing the encoding file
 file = open("EncodeFile.p", "rb")
 encodeListKnownWithIds = pickle.load(file)
 file.close()
 encodeListKnown, studentsId = encodeListKnownWithIds
 
 
+# Change the background
 def change_background(img_background, id, img):
     img_background[0:720, 0:1280] = imgModeList[id]
     img_background[145:145 + 480, 150:150 + 640] = img
     return img_background
 
+
+# Display the student information
 def display_student_info(student_id, img_background):
 
     student = bd.fetch_student(student_id)
@@ -92,76 +94,109 @@ def display_student_info(student_id, img_background):
 
     return img_background
 
-import time
-
+# Display the modal
 def display_modal(img_background, modal_id, student_id, duration=1):
+    start_time = cv2.getTickCount()
+    while True:
+        elapsed_time = (cv2.getTickCount() - start_time) / cv2.getTickFrequency()
+        if elapsed_time > duration:
+            break
+
+        if modal_id == 2:
+            img_background[0:720, 0:1280] = imgModeList[modal_id]
+            img_background[145:145 + 480, 150:150 + 640] = img
+
+            cv2.imshow("Face Attendance", img_background)
+            cv2.waitKey(1)
+
+        elif modal_id == 1:
+            img_background[0:720, 0:1280] = imgModeList[modal_id]
+            img_background[145:145 + 480, 150:150 + 640] = img
+
+            cv2.imshow("Face Attendance", img_background)
+            cv2.waitKey(1)
+
+        else:
+            img_background[0:720, 0:1280] = imgModeList[modal_id]
+            img_background[145:145 + 480, 150:150 + 640] = img
+
+            cv2.imshow("Face Attendance", img_background)
+            cv2.waitKey(1)
+
     if modal_id == 2:
-        img_background[0:720, 0:1280] = imgModeList[modal_id]
-        img_background[145:145 + 480, 150:150 + 640] = img
-
-        cv2.imshow("Face Attendance", img_background)
-        cv2.waitKey(1)
-
-        time.sleep(duration)
-
         return display_modal(img_background, 1, student_id)
-
-    if modal_id == 1:
-
-        img_background[0:720, 0:1280] = imgModeList[modal_id]
-        img_background[145:145 + 480, 150:150 + 640] = img
-
-        cv2.imshow("Face Attendance", img_background)
-        cv2.waitKey(1)
-
-        time.sleep(duration)
-
+    elif modal_id == 1:
         return display_student_info(student_id, img_background)
-
     else:
-        img_background[0:720, 0:1280] = imgModeList[modal_id]
-        img_background[145:145 + 480, 150:150 + 640] = img
-
-        cv2.imshow("Face Attendance", img_background)
-        cv2.waitKey(1)
-
-        time.sleep(duration)
-
         return img_background
 
+
+# Recognize the faces with threading
+lock = threading.Lock()
+recognized_faces = []
+
+
+def recognize_faces():
+    global recognized_faces
+    while True:
+        with lock:
+            success, img = cap.read()
+            if not success:
+                continue
+            imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+            imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
+
+            faceCurFrame = face_recognition.face_locations(imgS)
+            encodeCurFrame = face_recognition.face_encodings(imgS, faceCurFrame)
+
+
+        new_recognized_faces = []
+        for encodeFace, faceLoc in zip(encodeCurFrame, faceCurFrame):
+            matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
+            faceDistance = face_recognition.face_distance(encodeListKnown, encodeFace)
+
+            matchIndex = np.argmin(faceDistance)
+            if matches[matchIndex]:
+                student_id = int(studentsId[matchIndex])
+                new_recognized_faces.append((student_id, faceLoc))
+
+
+        with lock:
+            recognized_faces = new_recognized_faces
+        time.sleep(0.05)
+
+
+recognition_thread = threading.Thread(target=recognize_faces, daemon=True)
+recognition_thread.start()
+
+
+# Main loop
 while True:
-    success, img = cap.read()
+    with lock:
+        success, img = cap.read()
+        if not success:
+            break
 
-    imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
-    imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
+        img_background[145:145 + 480, 150:150 + 640] = img
 
-    faceCurFrame = face_recognition.face_locations(imgS)
-    encodeCurFrame = face_recognition.face_encodings(imgS, faceCurFrame)
 
-    img_background[145:145 + 480, 150:150 + 640] = img
-
-    for encodeFace, faceLoc in zip(encodeCurFrame, faceCurFrame):
-        matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
-        faceDistance = face_recognition.face_distance(encodeListKnown, encodeFace)
-
-        matchIndex = np.argmin(faceDistance)
-
-        if matches[matchIndex]:
-            student_id = int(studentsId[matchIndex])
-
-            try:
-
-                id = register_attendance(student_id, discipline_id)
-                img_background = display_modal(img_background, id, student_id)
-
-            except Exception as e:
-                print(f"Erro ao registrar frequência: {e}")
-
+        for student_id, faceLoc in recognized_faces:
             y1, x2, y2, x1 = faceLoc
             y1, x2, y2, x1 = y1 * 4, x2 * 4, y2 * 4, x1 * 4
             bbox = 145 + x1, 150 + y1, x2 - x1, y2 - y1
             img_background = cvzone.cornerRect(img_background, bbox, rt=0)
 
-    # Exibe a tela de vídeo com a imagem de fundo atualizada
+
+            try:
+                discipline_id = bd.fetchDisciplineByHourAndDay(student_id, day_of_week, current_hour)
+                id = register_attendance(student_id, discipline_id)
+                img_background = display_modal(img_background, id, student_id)
+            except Exception as e:
+                print(f"Erro ao registrar frequência: {e}")
+
     cv2.imshow("Face Attendance", img_background)
-    cv2.waitKey(1)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()

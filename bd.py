@@ -32,7 +32,7 @@ def create_tables():
         )
     ''')
 
-    # Tabela para matérias (disciplinas)
+    # Tabela para disciplinas
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS discipline (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,6 +40,17 @@ def create_tables():
             day_of_week TEXT NOT NULL,
             start_time TEXT NOT NULL,
             end_time TEXT NOT NULL
+        )
+    ''')
+
+    # Tabela associativa entre alunos e disciplinas
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS students_disciplines (
+            student_id INTEGER NOT NULL,
+            discipline_id INTEGER NOT NULL,
+            PRIMARY KEY (student_id, discipline_id),
+            FOREIGN KEY (student_id) REFERENCES students(id),
+            FOREIGN KEY (discipline_id) REFERENCES discipline(id)
         )
     ''')
 
@@ -100,8 +111,36 @@ def is_valid_discipline(discipline_id):
             return True
     return False
 
+def add_student_to_discipline(student_id, discipline_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO students_disciplines (student_id, discipline_id) VALUES (?, ?)",
+            (student_id, discipline_id)
+        )
+        conn.commit()
+        print(f"Aluno {student_id} adicionado à disciplina {discipline_id}.")
+    except sqlite3.IntegrityError:
+        print("Este aluno já está associado a essa disciplina.")
+    conn.close()
+
 # Função para registrar presença
 def register_attendance(student_id, discipline_id):
+    # Verificar se o aluno está inscrito na disciplina
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT COUNT(*) FROM students_disciplines
+        WHERE student_id = ? AND discipline_id = ?
+    ''', (student_id, discipline_id))
+    is_enrolled = cursor.fetchone()[0]
+    conn.close()
+
+    if not is_enrolled:
+        print("O aluno não está inscrito nesta disciplina.")
+        return 1  # Código para aluno não inscrito
+
     # Verificar se o dia e o horário estão corretos
     if is_valid_discipline(discipline_id):
         conn = connect_db()
@@ -129,14 +168,12 @@ def register_attendance(student_id, discipline_id):
                 (student_id, discipline_id, timestamp)
             )
             conn.commit()
-            print(f"Presença registrada para o aluno {student_id} na matéria {discipline_id}")
+            print(f"Presença registrada para o aluno {student_id} na matéria {discipline_id}.")
             conn.close()
             return 2
-
-
-        conn.close()
     else:
         print("A presença não pode ser registrada. O dia ou horário não corresponde à matéria.")
+        return 4
 
 
 # Função para buscar matérias
@@ -165,31 +202,37 @@ def fetch_student(id):
     conn.close()
     return student
 
+def fetch_disciplines_by_student(student_id):
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT d.id, d.name, d.day_of_week, d.start_time, d.end_time
+        FROM discipline d
+        INNER JOIN students_disciplines sd ON d.id = sd.discipline_id
+        WHERE sd.student_id = ?
+    ''', (student_id,))
+    disciplines = cursor.fetchall()
+    conn.close()
+    return disciplines
 
-def fetchDisciplineByHourAndDay(day, hour):
+def fetchDisciplineByHourAndDay(student_id, day, hour):
     try:
-
         conn = sqlite3.connect("attendance.db")
         cursor = conn.cursor()
 
-
         query = """
-            SELECT id
-            FROM discipline 
-            WHERE day_of_week = ? 
-            AND start_time <= ? 
-            AND end_time > ?
+            SELECT d.id
+            FROM discipline d
+            INNER JOIN students_disciplines sd ON d.id = sd.discipline_id
+            WHERE sd.student_id = ?
+            AND d.day_of_week = ?
+            AND d.start_time <= ?
+            AND d.end_time > ?
         """
 
-
-        cursor.execute(query, (day, hour, hour))
-
-
+        cursor.execute(query, (student_id, day, hour, hour))
         discipline_id = cursor.fetchone()
-
-
         conn.close()
-
 
         if discipline_id:
             return discipline_id[0]
@@ -202,11 +245,15 @@ def fetchDisciplineByHourAndDay(day, hour):
 
 
 def criarBanco():
-     create_tables()
-     register_discipline("Banco de Dados 2", "domingo", "12:00", "20:00")
-     register_discipline("Banco de Dados 2", "quarta", "14:00", "18:00")
-     register_discipline("Banco de Dados 2", "terca", "14:00", "18:00")
-     register_student(16749856, "Marco Vinicius", "Ciência da Computação", "Images/16749856.jpg")
-     register_student(745932625, "Vitao Borboleto", "Dados 3", "Images/745932625.jpeg")
+    create_tables()
+    register_discipline("Banco de Dados 2", "terça", "12:00", "20:00")
+    register_discipline("Compiladores", "terça", "12:00", "20:00")
+    register_discipline("Mostra de Trabalhos Cientificos", "sexta", "10:00", "23:00")
+    register_student(16749856, "Marco Vinicius", "Ciencia da Computacao", "Images/16749856.jpg")
+    register_student(745932625, "Victor Zucherato", "Ciencia da Computacao", "Images/745932625.jpeg")
+
+    # Associar alunos a disciplinas
+    add_student_to_discipline(16749856, 1)
+    add_student_to_discipline(745932625, 2)
 
 #criarBanco()
